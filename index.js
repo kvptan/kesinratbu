@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-const { Client, GatewayIntentBits, MessageActionRow, MessageSelectMenu } = require('discord.js');
+const { Client, GatewayIntentBits } = require('discord.js');
 const puppeteer = require('puppeteer');
 
 const client = new Client({
@@ -85,12 +85,11 @@ const userAgents = [
   "Mozilla/5.0 (iPhone; CPU iPhone OS 10_0_2 like Mac OS X) AppleWebKit/602.1.50 (KHTML, like Gecko) Version/10.0 Mobile/14A456 Safari/602.1",
 ];
 
-
 function getRandomUserAgent() {
   return userAgents[Math.floor(Math.random() * userAgents.length)];
 }
 
-// Link bazlı eylemler tutuluyor
+// Aktif izleyici eylemlerini tutar
 // key = url, value = { url, active, viewers: [{id, browser}], count }
 const actions = new Map();
 
@@ -102,20 +101,18 @@ async function simulateViewer(url, viewerId, action) {
     });
     const page = await browser.newPage();
 
-    // Rastgele user agent ata
     await page.setUserAgent(getRandomUserAgent());
-
     await page.goto(url, { waitUntil: 'networkidle2' });
     console.log(`✅ İzleyici ${viewerId} yayın sayfasına bağlandı: ${url}`);
 
     action.viewers.push({ id: viewerId, browser });
 
-    // Sürekli açık kalsın, durdurulana kadar
+    // İzleyici aktif olduğu sürece bekle
     while (action.active && action.viewers.some(v => v.id === viewerId)) {
       await new Promise(r => setTimeout(r, 5000));
     }
 
-    // Kapatılıyor
+    // İzleyici kapatılıyor
     await browser.close();
     console.log(`❌ İzleyici ${viewerId} bağlantısı kapandı: ${url}`);
 
@@ -141,7 +138,7 @@ client.on('messageCreate', async (message) => {
 
   const content = message.content.trim();
 
-  // Başlatma komutu: !izlenme <url> <adet>
+  // Komut: !izlenme <url> <adet>
   if (content.startsWith('!izlenme')) {
     const parts = content.split(' ');
     if (parts.length < 3) {
@@ -154,35 +151,30 @@ client.on('messageCreate', async (message) => {
       return message.reply('❗ Geçerli pozitif sayı girin.');
     }
 
-    // Aynı linke eylem varsa uyar
     if (actions.has(url)) {
       return message.reply('❗ Bu link için zaten aktif bir izleyici eylemi var. Önce onu durdurun.');
     }
 
-    // Eylemi oluştur
+    // Yeni eylem oluştur
     const action = {
       url,
       active: true,
       viewers: [],
       count,
     };
+
     actions.set(url, action);
 
-    message.reply(`🎥 ${count} izleyici simülasyonu başlatılıyor: ${url}`);
+    message.reply(`✅ ${count} izleyici başlatılıyor: ${url}`);
 
-    // İzleyicileri sırayla başlat
-    for (let i = 1; i <= count; i++) {
-      simulateViewer(url, i, action);
-      // Araya küçük delay koyarak yükü azalt
-      await new Promise(r => setTimeout(r, 1000));
+    // İzleyicileri başlat
+    for (let i = 0; i < count; i++) {
+      simulateViewer(url, `${message.author.id}-${i}`, action);
+      await new Promise(r => setTimeout(r, 1000)); // 1 saniye aralıkla aç
     }
-
-    message.reply(`✅ İzleyici simülasyonları başlatıldı. Durdurmak için !durdur <link> kullan.`);
-
-    return;
   }
 
-  // Durdurma komutu: !durdur <link>
+  // Komut: !durdur <url>
   if (content.startsWith('!durdur')) {
     const parts = content.split(' ');
     if (parts.length < 2) {
@@ -190,41 +182,15 @@ client.on('messageCreate', async (message) => {
     }
 
     const url = parts[1];
-
     if (!actions.has(url)) {
-      return message.reply('❗ Bu link için aktif bir eylem bulunamadı.');
+      return message.reply('❗ Bu link için aktif bir izleyici eylemi yok.');
     }
 
     const action = actions.get(url);
     action.active = false;
 
-    message.reply(`🛑 ${url} adresine gönderilen tüm izleyici simülasyonları durduruldu.`);
-
-    return;
-  }
-
-  // Aktif eylemleri listele: !eylemler
-  if (content === '!eylemler') {
-    if (actions.size === 0) {
-      return message.reply('❗ Aktif izleyici eylemi yok.');
-    }
-
-    let description = '';
-    let i = 1;
-    for (const [url, action] of actions) {
-      const activeEmoji = action.active ? '🟢' : '🔴';
-      description += `**${i}.** ${activeEmoji} ${url} - İzleyici sayısı: ${action.count}\n`;
-      i++;
-    }
-
-    // Eğer destekliyorsa buton yerine select menu yapabiliriz, şimdilik text reply:
-    return message.reply({ content: `📊 **Aktif İzleyici Eylemleri:**\n${description}` });
+    message.reply(`⏹️ İzleyici eylemi durduruluyor: ${url}`);
   }
 });
 
 client.login(process.env.DISCORD_TOKEN);
-
-
-client.on('ready', () => {
-  console.log('Bot çalıştı');
-});
