@@ -171,41 +171,49 @@ client.on('messageCreate', async (message) => {
 
     actions.set(url, action);
 
-    message.reply(`🔄 ${url} adresi için ${count} izleyici simülasyonu başlatılıyor...`);
+    message.reply(`✅ ${count} izleyici simülasyonu başlatılıyor: ${url}`);
 
     // İzleyicileri başlat
     for (let i = 0; i < count; i++) {
       simulateViewer(url, i + 1, action);
-      // Çok hızlı açarsan sorun olabilir, dilersen araya delay ekle
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 1000)); // izleyici başlatmaları arasında 1 saniye bekle
     }
-
-    return;
   }
 
   // Komut: !dur <url>
-  if (content.startsWith('!dur')) {
+  else if (content.startsWith('!dur')) {
     const parts = content.split(' ');
     if (parts.length < 2) {
       return message.reply('❗ Kullanım: !dur <yayın_linki>');
     }
+
     const url = parts[1];
-    const action = actions.get(url);
-    if (!action) {
-      return message.reply('❗ Bu link için aktif bir izleyici eylemi yok.');
+    if (!actions.has(url)) {
+      return message.reply('❗ Bu link için aktif bir izleyici eylemi bulunamadı.');
     }
 
+    const action = actions.get(url);
     action.active = false;
 
-    message.reply(`🛑 ${url} adresindeki izleyici simülasyonu durduruldu.`);
-    return;
+    // Tüm izleyicileri kapat
+    for (const viewer of action.viewers) {
+      try {
+        await viewer.browser.close();
+      } catch {}
+    }
+
+    actions.delete(url);
+    message.reply(`❌ ${url} için izleyici eylemi durduruldu.`);
   }
 });
 
-client.login(process.env.DISCORD_TOKEN);
-
-const port = process.env.PORT || 3000;
-
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
+// Express server - opsiyonel, botu canlı tutmak için
+const PORT = process.env.PORT || 3000;
+app.get('/', (req, res) => {
+  res.send('Bot çalışıyor.');
 });
+app.listen(PORT, () => {
+  console.log(`Express server ${PORT} portunda çalışıyor.`);
+});
+
+client.login(process.env.DISCORD_TOKEN);
