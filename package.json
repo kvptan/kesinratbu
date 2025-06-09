@@ -1,0 +1,21 @@
+{
+  "name": "kesinratbu",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "axios": "^1.9.0",
+    "discord.js": "^14.19.3",
+    "node-fetch": "^3.3.2",
+    "puppeteer": "^24.10.0",
+    "uuid": "^11.1.0"
+	  "dependencies": {
+    "dotenv": "^16.0.0"
+  }
+}
