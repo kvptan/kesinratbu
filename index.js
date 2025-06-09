@@ -2,6 +2,8 @@ require('dotenv').config();
 
 const { Client, GatewayIntentBits } = require('discord.js');
 const puppeteer = require('puppeteer');
+const express = require('express');
+const app = express();
 
 const client = new Client({
   intents: [
@@ -203,6 +205,7 @@ client.on('messageCreate', async (message) => {
 client.login(process.env.DISCORD_TOKEN);
 
 const port = process.env.PORT || 3000;
+
 app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+  console.log(`Server is running on port ${port}`);
 });
