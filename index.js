@@ -1,116 +1,96 @@
-require('dotenv').config();
-const { Client, GatewayIntentBits } = require('discord.js');
-const puppeteer = require('puppeteer');
-const express = require('express');
+require("dotenv").config();
+const { Client, GatewayIntentBits, Partials } = require("discord.js");
+const express = require("express");
+const puppeteer = require("puppeteer");
+const app = express();
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+  partials: [Partials.Channel],
 });
 
-const app = express();
 const PORT = process.env.PORT || 3000;
+app.get("/", (req, res) => res.send("Bot aktif!"));
+app.listen(PORT, () => console.log(`Web sunucusu çalışıyor: ${PORT}`));
 
-// Render ping için
-app.get('/', (req, res) => {
-  res.send('Bot Aktif!');
-});
+// İzleyici kontrol
+let viewers = [];
+let isWatching = false;
 
-app.listen(PORT, () => {
-  console.log(`Web sunucusu ${PORT} portunda çalışıyor`);
-});
+async function createViewer(link) {
+  const browser = await puppeteer.launch({
+    headless: "new",
+    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+  });
+  const page = await browser.newPage();
+  await page.goto(link);
 
-// Tarayıcı ve sekmelerin yönetimi
-let browser;
-let pages = [];
-let refreshInterval;
-
-// !izlenme komutu => !izlenme https://site.com 5
-async function startWatching(url, count, message) {
-  try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-
-    for (let i = 0; i < count; i++) {
-      const page = await browser.newPage();
-      await page.goto(url, { waitUntil: 'networkidle2' });
-      pages.push(page);
+  const interval = setInterval(async () => {
+    try {
+      await page.reload({ waitUntil: ["networkidle0", "domcontentloaded"] });
+    } catch (e) {
+      console.error("Sayfa yenileme hatası:", e);
     }
+  }, 10000); // 10 saniyede bir yenile
 
-    message.channel.send(`🔁 ${count} sekme açıldı ve ${url} adresine gidildi. Sayfalar 10 saniyede bir yenilenecek.`);
-
-    refreshInterval = setInterval(async () => {
-      for (const page of pages) {
-        try {
-          await page.reload({ waitUntil: 'networkidle2' });
-        } catch (err) {
-          console.error('Yenileme hatası:', err.message);
-        }
-      }
-    }, 10000);
-
-  } catch (error) {
-    console.error('Hata:', error.message);
-    message.channel.send('❌ İzlenme başlatılamadı.');
-  }
+  viewers.push({ browser, page, interval });
 }
 
-async function stopWatching(message) {
-  try {
-    if (refreshInterval) clearInterval(refreshInterval);
-    for (const page of pages) await page.close();
-    if (browser) await browser.close();
-
-    pages = [];
-    browser = null;
-    message.channel.send('⛔ İzleme işlemi durduruldu.');
-  } catch (error) {
-    console.error('Durdurma hatası:', error.message);
-    message.channel.send('❌ İzleme durdurulurken bir hata oluştu.');
+async function stopViewers() {
+  for (const viewer of viewers) {
+    clearInterval(viewer.interval);
+    await viewer.browser.close();
   }
+  viewers = [];
+  isWatching = false;
 }
 
-client.on('messageCreate', async (message) => {
-  if (!message.content.startsWith('!')) return;
+client.on("ready", () => {
+  console.log(`Bot giriş yaptı: ${client.user.tag}`);
+});
 
-  const args = message.content.trim().split(' ');
+client.on("messageCreate", async (msg) => {
+  if (msg.author.bot || !msg.content.startsWith("!")) return;
+
+  const args = msg.content.trim().split(/\s+/);
   const command = args[0].toLowerCase();
 
-  if (command === '!izlenme') {
-    if (args.length < 3) {
-      return message.channel.send('❗ Doğru kullanım: `!izlenme <link> <sekmeSayısı>`');
-    }
+  if (command === "!izlenme") {
     const url = args[1];
-    const count = parseInt(args[2]);
+    const count = parseInt(args[2]) || 1;
 
-    if (!url.startsWith('http')) {
-      return message.channel.send('❗ Geçerli bir bağlantı girin (http veya https ile başlamalı).');
+    if (!url || !url.startsWith("http")) {
+      return msg.reply("❌ Lütfen geçerli bir link girin. Örnek: `!izlenme https://site.com 5`");
     }
 
-    if (isNaN(count) || count < 1 || count > 50) {
-      return message.channel.send('❗ Lütfen 1-50 arasında bir sayı girin.');
+    if (count > 50) return msg.reply("⚠️ Maksimum 50 izleyici açabilirsiniz.");
+    if (isWatching) return msg.reply("❌ Zaten izlenme işlemi başlatıldı. Önce `!durdur` ile durdurun.");
+
+    isWatching = true;
+    msg.reply(`✅ ${count} izleyici başlatılıyor...`);
+
+    for (let i = 0; i < count; i++) {
+      createViewer(url);
     }
-
-    startWatching(url, count, message);
   }
 
-  else if (command === '!durdur') {
-    stopWatching(message);
+  if (command === "!durdur") {
+    if (!isWatching) return msg.reply("❌ Şu anda çalışan bir izlenme işlemi yok.");
+    await stopViewers();
+    msg.reply("🛑 Tüm izleyiciler durduruldu.");
   }
 
-  else if (command === '!komutlar') {
-    message.channel.send(
-      `📜 **Kullanılabilir Komutlar**\n\n` +
-      `✅ \`!izlenme <link> <adet>\` → Verilen linki belirtilen sayıda sekmeyle izler, her 10 saniyede bir yeniler.\n` +
-      `⛔ \`!durdur\` → Tüm sekmeleri kapatır ve yenilemeyi durdurur.\n` +
-      `❓ \`!komutlar\` → Tüm komutları gösterir.`
-    );
+  if (command === "!komutlar" || command === "!yardım") {
+    msg.reply(`
+📜 **Komutlar Menüsü**
+━━━━━━━━━━━━━━━━━━
+🔹 \`!izlenme <link> <sayı>\` → Belirtilen linke izleyici gönderir. Örn: \`!izlenme https://site.com 5\`
+🔹 \`!durdur\` → Açılmış olan tüm izleyicileri kapatır.
+🔹 \`!komutlar\` → Yardım menüsünü gösterir.
+━━━━━━━━━━━━━━━━━━
+⚠️ Uyarı: Render'da maksimum 50 izleyici önerilir.
+`);
   }
-});
-
-client.once('ready', () => {
-  console.log(`${client.user.tag} olarak giriş yapıldı.`);
 });
 
 client.login(process.env.TOKEN);
