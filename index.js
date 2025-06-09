@@ -1,143 +1,116 @@
-const { Client, GatewayIntentBits } = require('discord.js');
-const express = require('express');
-const puppeteer = require('puppeteer');
 require('dotenv').config();
+const { Client, GatewayIntentBits } = require('discord.js');
+const puppeteer = require('puppeteer');
+const express = require('express');
+
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+});
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
-});
-
-let browser;
-let pages = [];
-let intervalId;
-
+// Render ping için
 app.get('/', (req, res) => {
-  res.send('Bot is running.');
-});
-
-client.once('ready', () => {
-  console.log(`Bot giriş yaptı: ${client.user.tag}`);
-});
-
-client.on('messageCreate', async message => {
-  if (message.author.bot) return;
-
-  // !komutlar
-  if (message.content === '!komutlar') {
-    return message.reply(
-      `📋 **Komutlar Listesi**\n\n` +
-      `🔹 \`!izlenme <URL> <sayı>\`\n` +
-      `  Belirtilen URL'yi verilen sayı kadar açar ve her 10 saniyede bir yeniler.\n\n` +
-      `🔹 \`!durdur\`\n` +
-      `  Tüm açık sayfaları kapatır ve işlemleri durdurur.\n\n` +
-      `🔹 \`!eylemler\`\n` +
-      `  Şu anda izlenen sayfaları ve toplam sayfa sayısını gösterir.\n\n` +
-      `🔹 \`!komutlar\`\n` +
-      `  Tüm mevcut komutları ve açıklamalarını listeler.`
-    );
-  }
-
-  // !eylemler
-  if (message.content === '!eylemler') {
-    if (pages.length === 0) {
-      return message.reply('🔍 Şu anda izlenen hiçbir sayfa yok.');
-    }
-
-    const list = pages.map((p, i) => `🔸 [${i + 1}] ${p.url}`).join('\n');
-    return message.reply(`🎯 **Şu anda izlenen sayfalar (${pages.length})**:\n\n${list}`);
-  }
-
-  // !izlenme <url> <sayı>
-  if (message.content.startsWith('!izlenme')) {
-    const args = message.content.split(' ').slice(1);
-    if (args.length !== 2) {
-      return message.reply('❗ Doğru kullanım: `!izlenme <URL> <kaç sayfa açılsın>`');
-    }
-
-    const [url, countStr] = args;
-    const count = parseInt(countStr);
-    if (isNaN(count) || count <= 0 || count > 50) {
-      return message.reply('❗ Sayfa sayısı 1 ile 50 arasında bir sayı olmalıdır.');
-    }
-
-    message.reply(`✅ ${count} adet izleyici ${url} adresine bağlanıyor ve her 10 saniyede bir yenilenecek.`);
-
-    try {
-      browser = await puppeteer.launch({
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--window-size=1280,720'
-        ]
-      });
-
-      for (let i = 0; i < count; i++) {
-        const page = await browser.newPage();
-        await page.goto(url, { waitUntil: 'domcontentloaded' });
-        console.log(`Açıldı: ${url} [${i + 1}]`);
-        pages.push({ url, page });
-      }
-
-      intervalId = setInterval(async () => {
-        for (const { url, page } of pages) {
-          try {
-            await page.reload({ waitUntil: 'domcontentloaded' });
-            console.log(`Yenilendi: ${url}`);
-          } catch (err) {
-            console.error(`Yenileme hatası (${url}):`, err.message);
-          }
-        }
-      }, 10000);
-
-    } catch (err) {
-      console.error(err);
-      message.reply('❌ Sayfalar açılırken hata oluştu.');
-    }
-  }
-
-  // !durdur
-  if (message.content === '!durdur') {
-    if (intervalId) {
-      clearInterval(intervalId);
-      intervalId = null;
-    }
-
-    if (pages.length > 0) {
-      for (const { page } of pages) {
-        try {
-          await page.close();
-        } catch (err) {
-          console.error('Sayfa kapatma hatası:', err.message);
-        }
-      }
-      pages = [];
-    }
-
-    if (browser) {
-      try {
-        await browser.close();
-        browser = null;
-      } catch (err) {
-        console.error('Tarayıcı kapatma hatası:', err.message);
-      }
-    }
-
-    message.reply('⛔ Tüm işlemler durduruldu ve sayfalar kapatıldı.');
-  }
+  res.send('Bot Aktif!');
 });
 
 app.listen(PORT, () => {
-  console.log(`Sunucu çalışıyor: http://localhost:${PORT}`);
+  console.log(`Web sunucusu ${PORT} portunda çalışıyor`);
 });
 
-client.login(process.env.DISCORD_TOKEN);
+// Tarayıcı ve sekmelerin yönetimi
+let browser;
+let pages = [];
+let refreshInterval;
+
+// !izlenme komutu => !izlenme https://site.com 5
+async function startWatching(url, count, message) {
+  try {
+    browser = await puppeteer.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+
+    for (let i = 0; i < count; i++) {
+      const page = await browser.newPage();
+      await page.goto(url, { waitUntil: 'networkidle2' });
+      pages.push(page);
+    }
+
+    message.channel.send(`🔁 ${count} sekme açıldı ve ${url} adresine gidildi. Sayfalar 10 saniyede bir yenilenecek.`);
+
+    refreshInterval = setInterval(async () => {
+      for (const page of pages) {
+        try {
+          await page.reload({ waitUntil: 'networkidle2' });
+        } catch (err) {
+          console.error('Yenileme hatası:', err.message);
+        }
+      }
+    }, 10000);
+
+  } catch (error) {
+    console.error('Hata:', error.message);
+    message.channel.send('❌ İzlenme başlatılamadı.');
+  }
+}
+
+async function stopWatching(message) {
+  try {
+    if (refreshInterval) clearInterval(refreshInterval);
+    for (const page of pages) await page.close();
+    if (browser) await browser.close();
+
+    pages = [];
+    browser = null;
+    message.channel.send('⛔ İzleme işlemi durduruldu.');
+  } catch (error) {
+    console.error('Durdurma hatası:', error.message);
+    message.channel.send('❌ İzleme durdurulurken bir hata oluştu.');
+  }
+}
+
+client.on('messageCreate', async (message) => {
+  if (!message.content.startsWith('!')) return;
+
+  const args = message.content.trim().split(' ');
+  const command = args[0].toLowerCase();
+
+  if (command === '!izlenme') {
+    if (args.length < 3) {
+      return message.channel.send('❗ Doğru kullanım: `!izlenme <link> <sekmeSayısı>`');
+    }
+    const url = args[1];
+    const count = parseInt(args[2]);
+
+    if (!url.startsWith('http')) {
+      return message.channel.send('❗ Geçerli bir bağlantı girin (http veya https ile başlamalı).');
+    }
+
+    if (isNaN(count) || count < 1 || count > 50) {
+      return message.channel.send('❗ Lütfen 1-50 arasında bir sayı girin.');
+    }
+
+    startWatching(url, count, message);
+  }
+
+  else if (command === '!durdur') {
+    stopWatching(message);
+  }
+
+  else if (command === '!komutlar') {
+    message.channel.send(
+      `📜 **Kullanılabilir Komutlar**\n\n` +
+      `✅ \`!izlenme <link> <adet>\` → Verilen linki belirtilen sayıda sekmeyle izler, her 10 saniyede bir yeniler.\n` +
+      `⛔ \`!durdur\` → Tüm sekmeleri kapatır ve yenilemeyi durdurur.\n` +
+      `❓ \`!komutlar\` → Tüm komutları gösterir.`
+    );
+  }
+});
+
+client.once('ready', () => {
+  console.log(`${client.user.tag} olarak giriş yapıldı.`);
+});
+
+client.login(process.env.TOKEN);
