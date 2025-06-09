@@ -1,95 +1,106 @@
 require("dotenv").config();
-const { Client, GatewayIntentBits, Partials } = require("discord.js");
-const express = require("express");
+const { Client, GatewayIntentBits } = require("discord.js");
 const puppeteer = require("puppeteer");
+const express = require("express");
+
 const app = express();
+app.get("/", (req, res) => res.send("Bot aktif!"));
+app.listen(process.env.PORT || 3000);
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
-  partials: [Partials.Channel],
 });
 
-const PORT = process.env.PORT || 3000;
-app.get("/", (req, res) => res.send("Bot aktif!"));
-app.listen(PORT, () => console.log(`Web sunucusu çalışıyor: ${PORT}`));
+let pages = [];
+let refreshInterval;
+let isRunning = false;
 
-// İzleyici kontrol
-let viewers = [];
-let isWatching = false;
+client.once("ready", () => {
+  console.log(`Bot ${client.user.tag} olarak giriş yaptı.`);
+});
 
-async function createViewer(link) {
-  const browser = await puppeteer.launch({
-    headless: "new",
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
-  const page = await browser.newPage();
-  await page.goto(link);
+client.on("messageCreate", async (message) => {
+  if (!message.content.startsWith("!")) return;
 
-  const interval = setInterval(async () => {
-    try {
-      await page.reload({ waitUntil: ["networkidle0", "domcontentloaded"] });
-    } catch (e) {
-      console.error("Sayfa yenileme hatası:", e);
-    }
-  }, 10000); // 10 saniyede bir yenile
+  const [command, ...args] = message.content.trim().split(" ");
 
-  viewers.push({ browser, page, interval });
-}
+  if (command === "!komutlar") {
+    return message.channel.send(`
+🛠 **Kullanılabilir Komutlar:**
 
-async function stopViewers() {
-  for (const viewer of viewers) {
-    clearInterval(viewer.interval);
-    await viewer.browser.close();
+📺 \`!izlenme <link> <sayı>\`
+• Belirtilen linke izleyici gönderir (sayısı kadar sekme açılır).
+• Örnek: \`!izlenme https://youtube.com/video 5\`
+
+⏹️ \`!durdur\`
+• Açık tüm sekmeleri kapatır ve işlemi durdurur.
+
+🎬 \`!eylemler\`
+• Aktif olan izleyici işlemlerini listeler.
+
+📃 \`!komutlar\`
+• Bu komutları tekrar listeler.
+    `);
   }
-  viewers = [];
-  isWatching = false;
-}
-
-client.on("ready", () => {
-  console.log(`Bot giriş yaptı: ${client.user.tag}`);
-});
-
-client.on("messageCreate", async (msg) => {
-  if (msg.author.bot || !msg.content.startsWith("!")) return;
-
-  const args = msg.content.trim().split(/\s+/);
-  const command = args[0].toLowerCase();
 
   if (command === "!izlenme") {
-    const url = args[1];
-    const count = parseInt(args[2]) || 1;
+    const [link, countStr] = args;
+    const count = parseInt(countStr);
 
-    if (!url || !url.startsWith("http")) {
-      return msg.reply("❌ Lütfen geçerli bir link girin. Örnek: `!izlenme https://site.com 5`");
+    if (!link || isNaN(count) || count <= 0 || count > 20) {
+      return message.channel.send("Lütfen geçerli bir link ve 1-20 arasında sayı girin. Örnek: `!izlenme https://... 5`");
     }
 
-    if (count > 50) return msg.reply("⚠️ Maksimum 50 izleyici açabilirsiniz.");
-    if (isWatching) return msg.reply("❌ Zaten izlenme işlemi başlatıldı. Önce `!durdur` ile durdurun.");
+    if (isRunning) {
+      return message.channel.send("Zaten bir izleme işlemi aktif. Durdurmak için `!durdur` yaz.");
+    }
 
-    isWatching = true;
-    msg.reply(`✅ ${count} izleyici başlatılıyor...`);
+    isRunning = true;
+    const browser = await puppeteer.launch({
+      headless: "new",
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    });
+
+    message.channel.send(`🎥 ${count} adet sekme açılıyor ve ${link} izleniyor.`);
 
     for (let i = 0; i < count; i++) {
-      createViewer(url);
+      const page = await browser.newPage();
+      await page.goto(link, { waitUntil: "networkidle2" });
+      pages.push(page);
     }
+
+    refreshInterval = setInterval(async () => {
+      for (const page of pages) {
+        try {
+          await page.reload({ waitUntil: "networkidle2" });
+        } catch (err) {
+          console.error("Yenileme hatası:", err.message);
+        }
+      }
+    }, 10000);
+  }
+
+  if (command === "!eylemler") {
+    if (!isRunning || pages.length === 0) {
+      return message.channel.send("Şu anda aktif bir işlem yok.");
+    }
+    return message.channel.send(`🟢 Şu anda ${pages.length} sekme aktif olarak yenileniyor.`);
   }
 
   if (command === "!durdur") {
-    if (!isWatching) return msg.reply("❌ Şu anda çalışan bir izlenme işlemi yok.");
-    await stopViewers();
-    msg.reply("🛑 Tüm izleyiciler durduruldu.");
-  }
+    if (!isRunning) return message.channel.send("Zaten durdurulmuş.");
 
-  if (command === "!komutlar" || command === "!yardım") {
-    msg.reply(`
-📜 **Komutlar Menüsü**
-━━━━━━━━━━━━━━━━━━
-🔹 \`!izlenme <link> <sayı>\` → Belirtilen linke izleyici gönderir. Örn: \`!izlenme https://site.com 5\`
-🔹 \`!durdur\` → Açılmış olan tüm izleyicileri kapatır.
-🔹 \`!komutlar\` → Yardım menüsünü gösterir.
-━━━━━━━━━━━━━━━━━━
-⚠️ Uyarı: Render'da maksimum 50 izleyici önerilir.
-`);
+    clearInterval(refreshInterval);
+    for (const page of pages) {
+      try {
+        await page.close();
+      } catch (err) {
+        console.error("Sayfa kapatma hatası:", err.message);
+      }
+    }
+    pages = [];
+    isRunning = false;
+    return message.channel.send("⛔ Tüm sekmeler kapatıldı, izleme durduruldu.");
   }
 });
 
